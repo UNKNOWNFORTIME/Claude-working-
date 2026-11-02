@@ -1,0 +1,448 @@
+// Mindspace data model
+// Principles:
+//  - Every row belongs to exactly one user (userId) and every query is scoped by it.
+//  - Original captured content is never mutated by conversions (Thought.content is preserved).
+//  - Evaluations and decisions are append-only history.
+//  - Main entities use soft deletion (deletedAt) so they can be restored from Trash.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+enum ThoughtType {
+  IDEA
+  TASK
+  QUESTION
+  GOAL
+  OBSERVATION
+  RANDOM
+}
+
+enum ThoughtStatus {
+  INBOX
+  PROCESSED
+  ARCHIVED
+}
+
+enum IdeaStage {
+  JUST_AN_IDEA
+  EXPLORING
+  EVALUATING
+  WORTH_PURSUING
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum DecisionOutcome {
+  PURSUE
+  RESEARCH_FURTHER
+  REVISIT_LATER
+  NOT_WORTH_PURSUING
+}
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum GoalKind {
+  SHORT_TERM
+  LONG_TERM
+  CAREER
+  LEARNING
+  PERSONAL
+  FINANCIAL
+  CREATIVE
+}
+
+enum GoalStatus {
+  ACTIVE
+  ACHIEVED
+  PAUSED
+  DROPPED
+}
+
+enum ReflectionKind {
+  WEEKLY
+  PROJECT
+  GOAL
+  IDEA
+  GENERAL
+}
+
+enum EntityType {
+  THOUGHT
+  IDEA
+  PROJECT
+  GOAL
+}
+
+enum AIRole {
+  system
+  user
+  assistant
+}
+
+// ---------- Models ----------
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  name         String?
+  passwordHash String
+  // Incremented to invalidate all existing sessions (e.g. on password change)
+  sessionVersion Int    @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  settings        Settings?
+  thoughts        Thought[]
+  ideas           Idea[]
+  categories      Category[]
+  tags            Tag[]
+  evaluations     Evaluation[]
+  decisions       Decision[]
+  projects        Project[]
+  tasks           Task[]
+  goals           Goal[]
+  reflections     Reflection[]
+  links           EntityLink[]
+  aiConversations AIConversation[]
+  ideaNotes       IdeaNote[]
+}
+
+model Settings {
+  id        String  @id @default(uuid()) @db.Uuid
+  userId    String  @unique @db.Uuid
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // { personalInterest: 1.5, ... } — weights for evaluation criteria
+  scoringWeights Json?
+  aiEnabled      Boolean @default(false)
+  aiBaseUrl      String?
+  aiModel        String?
+  // AES-256-GCM encrypted with AUTH_SECRET; never sent to the client
+  aiApiKeyEnc    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Category {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  color     String   @default("slate")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ideas     Idea[]
+
+  @@unique([userId, name])
+}
+
+model Tag {
+  id        String       @id @default(uuid()) @db.Uuid
+  userId    String       @db.Uuid
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime     @default(now())
+  thoughts  ThoughtTag[]
+  ideas     IdeaTag[]
+
+  @@unique([userId, name])
+}
+
+model Thought {
+  id        String        @id @default(uuid()) @db.Uuid
+  userId    String        @db.Uuid
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // The original text as captured. Conversions copy from it; they never rewrite it.
+  content   String
+  type      ThoughtType?
+  status    ThoughtStatus @default(INBOX)
+  pinned    Boolean       @default(false)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  deletedAt DateTime?
+
+  tags  ThoughtTag[]
+  ideas Idea[]       @relation("IdeaSourceThought")
+
+  @@index([userId, status, deletedAt])
+  @@index([userId, createdAt])
+}
+
+model ThoughtTag {
+  thoughtId String  @db.Uuid
+  tagId     String  @db.Uuid
+  thought   Thought @relation(fields: [thoughtId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([thoughtId, tagId])
+}
+
+model Idea {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  summary     String    @default("")
+  description String    @default("")
+  motivation  String    @default("")
+  // [{ title, url }]
+  references  Json      @default("[]")
+  stage       IdeaStage @default(JUST_AN_IDEA)
+  priority    Priority  @default(MEDIUM)
+  categoryId  String?   @db.Uuid
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  sourceThoughtId String? @db.Uuid
+  sourceThought   Thought? @relation("IdeaSourceThought", fields: [sourceThoughtId], references: [id], onDelete: SetNull)
+  // Denormalised from the most recent completed evaluation, for sorting/filtering
+  latestScore Float?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  tags            IdeaTag[]
+  notes           IdeaNote[]
+  evaluations     Evaluation[]
+  decisions       Decision[]
+  projects        Project[]
+  aiConversations AIConversation[]
+
+  @@index([userId, stage, deletedAt])
+  @@index([userId, updatedAt])
+}
+
+model IdeaTag {
+  ideaId String @db.Uuid
+  tagId  String @db.Uuid
+  idea   Idea   @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([ideaId, tagId])
+}
+
+model IdeaNote {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ideaId    String   @db.Uuid
+  idea      Idea     @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ideaId, createdAt])
+}
+
+model Evaluation {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ideaId    String   @db.Uuid
+  idea      Idea     @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  // Free-text answers to the structured questions, keyed by question id
+  answers   Json     @default("{}")
+  // What I am unsure about — shown next to the score so it is never read alone
+  uncertainties String @default("")
+  overallScore  Float?
+  completedAt   DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  scores    EvaluationScore[]
+  decisions Decision[]
+
+  @@index([ideaId, createdAt])
+}
+
+// Scores store the weight that was in effect, so historic results stay explainable
+model EvaluationScore {
+  id           String     @id @default(uuid()) @db.Uuid
+  evaluationId String     @db.Uuid
+  evaluation   Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  criterion    String
+  score        Int
+  weight       Float
+
+  @@unique([evaluationId, criterion])
+}
+
+model Decision {
+  id           String          @id @default(uuid()) @db.Uuid
+  userId       String          @db.Uuid
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ideaId       String          @db.Uuid
+  idea         Idea            @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  evaluationId String?         @db.Uuid
+  evaluation   Evaluation?     @relation(fields: [evaluationId], references: [id], onDelete: SetNull)
+  outcome      DecisionOutcome
+  rationale    String          @default("")
+  revisitAt    DateTime?
+  decidedAt    DateTime        @default(now())
+  createdAt    DateTime        @default(now())
+
+  @@index([userId, decidedAt])
+  @@index([ideaId, decidedAt])
+}
+
+model Project {
+  id              String        @id @default(uuid()) @db.Uuid
+  userId          String        @db.Uuid
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ideaId          String?       @db.Uuid
+  idea            Idea?         @relation(fields: [ideaId], references: [id], onDelete: SetNull)
+  name            String
+  description     String        @default("")
+  objective       String        @default("")
+  expectedOutcome String        @default("")
+  notes           String        @default("")
+  status          ProjectStatus @default(PLANNED)
+  deadline        DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+
+  milestones Milestone[]
+  tasks      Task[]
+
+  @@index([userId, status, deletedAt])
+}
+
+// A milestone belongs to either a project or a goal
+model Milestone {
+  id        String    @id @default(uuid()) @db.Uuid
+  projectId String?   @db.Uuid
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  goalId    String?   @db.Uuid
+  goal      Goal?     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  title     String
+  dueDate   DateTime?
+  done      Boolean   @default(false)
+  position  Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  tasks     Task[]
+}
+
+model Task {
+  id          String     @id @default(uuid()) @db.Uuid
+  userId      String     @db.Uuid
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId   String?    @db.Uuid
+  project     Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestoneId String?    @db.Uuid
+  milestone   Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  title       String
+  done        Boolean    @default(false)
+  dueDate     DateTime?
+  completedAt DateTime?
+  position    Int        @default(0)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([userId, done, dueDate])
+}
+
+model Goal {
+  id           String     @id @default(uuid()) @db.Uuid
+  userId       String     @db.Uuid
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String
+  kind         GoalKind   @default(PERSONAL)
+  whyItMatters String     @default("")
+  notes        String     @default("")
+  targetDate   DateTime?
+  progress     Int        @default(0)
+  status       GoalStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  milestones Milestone[]
+
+  @@index([userId, status, deletedAt])
+}
+
+model Reflection {
+  id         String         @id @default(uuid()) @db.Uuid
+  userId     String         @db.Uuid
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind       ReflectionKind @default(GENERAL)
+  title      String         @default("")
+  content    String         @default("")
+  // Weekly reflections: answers to optional prompts { promptId: text }
+  answers    Json           @default("{}")
+  weekOf     DateTime?      @db.Date
+  entityType EntityType?
+  entityId   String?        @db.Uuid
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@index([userId, kind, createdAt])
+  @@index([entityType, entityId])
+}
+
+// Undirected link between any two items. Endpoints are stored in a canonical
+// order (a <= b) so the same pair can only be linked once.
+model EntityLink {
+  id        String     @id @default(uuid()) @db.Uuid
+  userId    String     @db.Uuid
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  aType     EntityType
+  aId       String     @db.Uuid
+  bType     EntityType
+  bId       String     @db.Uuid
+  note      String     @default("")
+  createdAt DateTime   @default(now())
+
+  @@unique([userId, aType, aId, bType, bId])
+  @@index([userId, aType, aId])
+  @@index([userId, bType, bId])
+}
+
+model AIConversation {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @db.Uuid
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ideaId    String?     @db.Uuid
+  idea      Idea?       @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  title     String
+  action    String
+  model     String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  messages  AIMessage[]
+
+  @@index([userId, ideaId, updatedAt])
+}
+
+model AIMessage {
+  id             String         @id @default(uuid()) @db.Uuid
+  conversationId String         @db.Uuid
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           AIRole
+  content        String
+  createdAt      DateTime       @default(now())
+
+  @@index([conversationId, createdAt])
+}
