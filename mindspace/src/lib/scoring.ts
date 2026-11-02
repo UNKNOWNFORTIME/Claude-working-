@@ -183,7 +183,7 @@ export interface Insight {
  * Deterministic observations about trade-offs and uncertainty. These exist so a
  * single number is never read as a verdict.
  */
-export function scoreInsights(result: ScoreResult, opts: { unansweredRiskQuestions?: number; hasUncertainties?: boolean } = {}): Insight[] {
+export function scoreInsights(result: ScoreResult, opts: { risksWritten?: boolean; hasUncertainties?: boolean } = {}): Insight[] {
   const s = Object.fromEntries(result.breakdown.map((b) => [b.key, b.score])) as Record<CriterionKey, number | null>;
   const out: Insight[] = [];
 
@@ -198,7 +198,7 @@ export function scoreInsights(result: ScoreResult, opts: { unansweredRiskQuestio
   if (weak.length && result.overall !== null && result.overall >= 58) {
     out.push({
       tone: "caution",
-      text: `High overall score, but ${weak.map((w) => `${w.label.toLowerCase()} (${w.score}/10)`).join(", ")} ${weak.length > 1 ? "are" : "is"} very low. One weak dimension can sink an otherwise good idea.`,
+      text: `${result.overall >= 75 ? "High" : "Reasonable"} overall score, but ${weak.map((w) => `${w.label.toLowerCase()} (${w.score}/10)`).join(", ")} ${weak.length > 1 ? "are" : "is"} very low. One weak dimension can sink an otherwise good idea.`,
     });
   } else if (weak.length) {
     out.push({
@@ -222,7 +222,7 @@ export function scoreInsights(result: ScoreResult, opts: { unansweredRiskQuestio
     out.push({ tone: "info", text: "A long road, but you believe it compounds. Make sure the first milestone is still worth having on its own." });
   }
 
-  if (opts.unansweredRiskQuestions && opts.unansweredRiskQuestions > 0) {
+  if (opts.risksWritten === false && result.scoredCount > 0) {
     out.push({ tone: "caution", text: "You haven't written down the risks yet. Scores without named risks tend to be optimistic." });
   }
   if (opts.hasUncertainties === false) {

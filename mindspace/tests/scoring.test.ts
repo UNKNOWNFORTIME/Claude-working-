@@ -87,8 +87,9 @@ describe("scoreBand & insights", () => {
     expect(scoreInsights(res).some((i) => i.text.includes("hard to execute"))).toBe(true);
   });
 
-  it("nudges when risks are unanswered", () => {
+  it("nudges only when no risks are written down", () => {
     const res = computeScore(all(7));
-    expect(scoreInsights(res, { unansweredRiskQuestions: 4 }).some((i) => i.text.includes("risks"))).toBe(true);
+    expect(scoreInsights(res, { risksWritten: false }).some((i) => i.text.includes("risks"))).toBe(true);
+    expect(scoreInsights(res, { risksWritten: true }).some((i) => i.text.includes("risks"))).toBe(false);
   });
 });

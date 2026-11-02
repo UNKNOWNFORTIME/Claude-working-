@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { normalizeTag } from "./taxonomy";
 
 const DAY = 86_400_000;
-const STOP = new Set("the a an and or but if of to in on for with at by from is are was were be been i me my we you it this that these those what which who how why should would could can will just about into than then so as not do does did have has had more some any all maybe want need make get like really also very".split(" "));
+const STOP = new Set("the a an and or but if of to in on for with at by from is are was were be been i me my we you it this that these those what which who how why should would could can will just about into than then so as not do does did have has had more some any all maybe want need make get like really also very over works thing things something through there their them they when where while still even only".split(" "));
 
 /** Words/tags that keep coming back across thoughts and ideas. */
 export async function recurringThemes(userId: string) {

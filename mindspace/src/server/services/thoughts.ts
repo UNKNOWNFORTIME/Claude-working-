@@ -81,16 +81,26 @@ export async function setThoughtStatus(userId: string, id: string, status: Thoug
  * Creates an idea from a thought. The thought's original content is copied
  * into the idea description and left untouched on the thought itself.
  */
+/** A readable title from free text: first sentence if short, else cut at a word boundary. */
+export function deriveTitle(text: string, max = 80) {
+  const line = text.trim().split("\n")[0] ?? "";
+  const sentence = line.match(/^.+?[.?!](?=\s|$)/)?.[0] ?? line;
+  const candidate = sentence.length <= max ? sentence : line;
+  if (candidate.length <= max) return candidate.replace(/[.]$/, "");
+  const cut = candidate.slice(0, max);
+  return cut.slice(0, Math.max(cut.lastIndexOf(" "), 40)).replace(/[,;:\-–—]+$/, "") + "…";
+}
+
 export async function convertThoughtToIdea(userId: string, id: string, overrides: { title?: string } = {}) {
   const thought = await owned(userId, id);
   const tags = await db.thoughtTag.findMany({ where: { thoughtId: id }, select: { tagId: true } });
-  const title = (overrides.title?.trim() || firstLine(thought.content, 90)).slice(0, 200);
+  const title = (overrides.title?.trim() || deriveTitle(thought.content)).slice(0, 200);
   return db.$transaction(async (tx) => {
     const idea = await tx.idea.create({
       data: {
         userId,
         title,
-        summary: thought.content.length <= 280 ? thought.content : "",
+        summary: thought.content.length <= 280 && thought.content.trim() !== title ? thought.content.trim() : "",
         description: thought.content,
         sourceThoughtId: thought.id,
         tags: { create: tags.map((t) => ({ tagId: t.tagId })) },

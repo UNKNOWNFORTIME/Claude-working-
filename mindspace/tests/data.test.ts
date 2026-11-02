@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import { resetDb, makeUser } from "./helpers";
-import { createThought, convertThoughtToIdea, listThoughts, updateThought } from "@/server/services/thoughts";
+import { createThought, convertThoughtToIdea, listThoughts, updateThought, deriveTitle } from "@/server/services/thoughts";
 import { createIdea, getIdeaDetail, listIdeas, updateIdea, addIdeaNote } from "@/server/services/ideas";
 import { completeEvaluation, recordDecision, saveEvaluation, saveWeights, startEvaluation, getEvaluation } from "@/server/services/evaluations";
 import { convertIdeaToProject, addTask, updateTask, getProjectDetail } from "@/server/services/projects";
@@ -22,6 +22,8 @@ describe("capture → idea (Flow A)", () => {
 
     const idea = await convertThoughtToIdea(u.id, t.id);
     expect(idea.title).toBe("What if I create a digital heritage experience for Nigerian cities?");
+    expect(deriveTitle("I want to build an AI-powered application for Nigerian businesses that works over WhatsApp and handles payments.")).toMatch(/^I want to build an AI-powered application for Nigerian businesses that works…$/);
+    expect(deriveTitle("Learn Houdini. Start with FLIP.")).toBe("Learn Houdini");
     expect(idea.description).toBe(original);
     expect(idea.sourceThoughtId).toBe(t.id);
 
