@@ -5,7 +5,7 @@
   "description": "A place to think freely, evaluate honestly, and act intentionally.",
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "node scripts/copy-wllama.mjs && prisma generate && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -15,7 +15,10 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "user:create": "tsx scripts/create-user.ts",
-    "backup": "bash scripts/backup.sh"
+    "backup": "bash scripts/backup.sh",
+    "postinstall": "node scripts/copy-wllama.mjs",
+    "ai:download": "tsx scripts/download-model.ts",
+    "ai:models": "tsx scripts/download-model.ts --list"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -28,6 +31,7 @@
     "@radix-ui/react-slot": "^1.5.0",
     "@radix-ui/react-tabs": "^1.2.1",
     "@radix-ui/react-tooltip": "^1.4.1",
+    "@wllama/wllama": "^3.8.1",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -37,6 +41,7 @@
     "motion": "^14.9.0",
     "next": "^15.5.28",
     "next-themes": "^0.4.6",
+    "node-llama-cpp": "^3.22.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",

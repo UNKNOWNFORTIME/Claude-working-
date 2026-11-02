@@ -16,10 +16,10 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return { title: idea?.title ?? "Idea" };
 }
 
-export default async function IdeaPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; c?: string }> }) {
+export default async function IdeaPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; c?: string; run?: string }> }) {
   const user = await requireUser();
   const { id } = await params;
-  const { tab, c } = await searchParams;
+  const { tab, c, run } = await searchParams;
   assertUuid(id);
   const idea = await orNotFound(() => getIdeaDetail(user.id, id));
   const [categories, related, conversations, ai, tags, otherIdeas] = await Promise.all([
@@ -41,11 +41,12 @@ export default async function IdeaPage({ params, searchParams }: { params: Promi
         categories={categories.map((x) => ({ id: x.id, name: x.name, color: x.color }))}
         related={related}
         conversations={conversations}
-        aiReady={ai.ready}
+        ai={{ ready: ai.ready, provider: ai.aiProvider, label: ai.aiProvider === "local" ? `Offline model on your computer${ai.localModel ? ` · ${ai.localModel}` : ""}` : `Online API · ${ai.effectiveModel}` }}
         tagSuggestions={tags.map((t) => t.name)}
         otherIdeas={otherIdeas}
         initialTab={tab}
         openConversation={c}
+        autoRun={run === "critique" ? "critique" : undefined}
       />
     </div>
   );

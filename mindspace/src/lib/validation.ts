@@ -146,6 +146,8 @@ export const linkSchema = z.object({
 
 export const aiSettingsSchema = z.object({
   aiEnabled: z.boolean(),
+  aiProvider: z.enum(["local", "remote"]).default("local"),
+  localModel: z.string().trim().max(200).regex(/^$|^[A-Za-z0-9][A-Za-z0-9._-]*\.gguf$/, "Invalid model file").optional(),
   aiBaseUrl: z.string().trim().url("Enter a valid URL").max(500).or(z.literal("")),
   aiModel: trimmed(100),
   // undefined = keep existing, "" = clear

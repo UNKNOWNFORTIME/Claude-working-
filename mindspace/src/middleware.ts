@@ -27,5 +27,5 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   // Everything except static assets
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|robots.txt).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|robots.txt|manifest.webmanifest|icons/|wllama/|sw.js).*)"],
 };

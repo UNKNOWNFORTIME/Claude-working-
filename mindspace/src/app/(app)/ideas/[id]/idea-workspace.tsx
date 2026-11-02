@@ -24,15 +24,15 @@ import { TimeAgo } from "@/components/shared/item-link";
 import { RelatedItems } from "@/components/shared/related-items";
 import { NotesPanel } from "./notes-panel";
 import { EvaluationsPanel } from "./evaluations-panel";
-import { AIPanel, type ConversationView } from "./ai-panel";
+import { AIPanel, type ConversationView, type ServerAIInfo } from "./ai-panel";
 import type { IdeaStage, Priority } from "@prisma/client";
 
 type Ref = { title: string; url: string };
 type Patch = { title: string; summary: string; description: string; motivation: string; references: Ref[]; tags: string[]; stage: IdeaStage; priority: Priority; categoryId: string | null };
 
-export function IdeaWorkspace({ idea, categories, related, conversations, aiReady, tagSuggestions, otherIdeas, initialTab, openConversation }: {
-  idea: IdeaDetail; categories: { id: string; name: string; color: string }[]; related: RelatedItem[]; conversations: ConversationView[]; aiReady: boolean;
-  tagSuggestions: string[]; otherIdeas: { id: string; title: string }[]; initialTab?: string; openConversation?: string;
+export function IdeaWorkspace({ idea, categories, related, conversations, ai, tagSuggestions, otherIdeas, initialTab, openConversation, autoRun }: {
+  idea: IdeaDetail; categories: { id: string; name: string; color: string }[]; related: RelatedItem[]; conversations: ConversationView[]; ai: ServerAIInfo;
+  tagSuggestions: string[]; otherIdeas: { id: string; title: string }[]; initialTab?: string; openConversation?: string; autoRun?: "critique";
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -216,7 +216,7 @@ export function IdeaWorkspace({ idea, categories, related, conversations, aiRead
             <EvaluationsPanel idea={idea} />
           </TabsContent>
           <TabsContent value="ai" className="pt-6">
-            <AIPanel ideaId={idea.id} conversations={conversations} aiReady={aiReady} otherIdeas={otherIdeas} hasEvaluation={idea.evaluations.length > 0} openConversation={openConversation} />
+            <AIPanel ideaId={idea.id} conversations={conversations} ai={ai} otherIdeas={otherIdeas} hasEvaluation={idea.evaluations.length > 0} openConversation={openConversation} autoRun={autoRun} />
           </TabsContent>
           <TabsContent value="related" className="pt-6">
             <RelatedItems type="IDEA" id={idea.id} items={related} path={`/ideas/${idea.id}`} />

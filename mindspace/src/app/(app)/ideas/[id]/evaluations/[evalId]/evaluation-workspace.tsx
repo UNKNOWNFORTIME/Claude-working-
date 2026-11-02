@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, Info, Sparkles, Trash2 } from "lucide-react";
 import { completeEvaluation, deleteEvaluation, saveEvaluation } from "@/server/actions/evaluations";
 import { runAIAction } from "@/server/actions/ai";
+import { useDeviceAI } from "@/hooks/use-device-ai";
 import { useAutosave } from "@/hooks/use-autosave";
 import { EVALUATION_SECTIONS, RISK_QUESTION_IDS, countAnswered } from "@/lib/evaluation-questions";
 import { BAND_COPY, CRITERIA, computeScore, scoreBand, scoreInsights, type CriterionKey, type Scores, type Weights } from "@/lib/scoring";
@@ -39,6 +40,7 @@ export function EvaluationWorkspace({ evaluation, weights, weightsAreSnapshot, p
   previous: { createdAt: Date; overallScore: number | null; scores: Scores } | null; aiReady: boolean;
 }) {
   const router = useRouter();
+  const device = useDeviceAI();
   const [answers, setAnswers] = useState(evaluation.answers);
   const [scores, setScores] = useState<Scores>(evaluation.scores);
   const [uncertainties, setUncertainties] = useState(evaluation.uncertainties);
@@ -85,6 +87,11 @@ export function EvaluationWorkspace({ evaluation, weights, weightsAreSnapshot, p
     });
 
   const critique = () => {
+    if (device.active) {
+      // On-device models stream their answer in the Thinking partner tab
+      void autosave.flush().then(() => router.push(`/ideas/${evaluation.ideaId}?tab=ai&run=critique`));
+      return;
+    }
     setCritiquing(true);
     start(async () => {
       await autosave.flush();
@@ -276,7 +283,7 @@ export function EvaluationWorkspace({ evaluation, weights, weightsAreSnapshot, p
           ) : (
             <DecisionDialog ideaId={evaluation.ideaId} evaluationId={evaluation.id} label="Decide" variant="default" size="default" />
           )}
-          {aiReady && (
+          {(aiReady || device.active) && (
             <Button variant="outline" className="w-full" onClick={critique} loading={critiquing} disabled={result.scoredCount === 0 && answeredTotal === 0}>
               <Sparkles /> Ask AI to critique this
             </Button>

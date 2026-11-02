@@ -3,6 +3,7 @@ import { EVALUATION_SECTIONS } from "@/lib/evaluation-questions";
 import { criterionLabel } from "@/lib/scoring";
 import { stageLabel } from "@/lib/constants";
 import { getAIConfig, type AIConfig } from "./settings";
+import { localChat } from "./local-ai";
 import { ownedIdea } from "./ideas";
 import { NotFoundError, ValidationError } from "./errors";
 
@@ -24,6 +25,10 @@ Rules you must always follow:
 5. Ask clarifying questions when the idea is vague. End with 2–4 sharp questions when exploring.
 6. Never claim to have changed, saved or overwritten the person's notes. You only suggest; they decide.
 7. Be concise. Use short sections with markdown headings or bullet points. No filler, no flattery.`;
+
+/** Shorter instructions for small on-device models, same principles. */
+const COMPACT_SYSTEM_PROMPT = `You are a critical thinking partner helping one person judge their own idea.
+Rules: be direct, not flattering. Separate what they wrote ("You wrote:") from assumptions ("Assumption:"). Never invent statistics, prices, competitors or research — say what to check instead. Suggest cheap, concrete next steps. Use short bullet points. End with 2–3 sharp questions.`;
 
 const ACTION_PROMPTS: Record<AIActionId, string> = {
   explore:
@@ -92,6 +97,10 @@ export interface ChatMessage {
 
 export async function chatCompletion(cfg: AIConfig, messages: ChatMessage[], fetchImpl: typeof fetch = fetch): Promise<string> {
   if (!cfg.enabled) throw new ValidationError("AI features are turned off. Enable them in Settings.");
+  if (cfg.provider === "local") {
+    if (!cfg.localModel) throw new ValidationError("No offline model is downloaded yet. Run: npm run ai:download");
+    return localChat(cfg.localModel, messages);
+  }
   if (!cfg.apiKey) throw new ValidationError("No AI API key configured. Add one in Settings.");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90_000);
@@ -124,43 +133,72 @@ export async function chatCompletion(cfg: AIConfig, messages: ChatMessage[], fet
 }
 
 /**
- * Runs an AI action on an idea. Only called from an explicit user click. The
- * reply is stored as a conversation; it never modifies the idea itself.
+ * Builds the messages for an AI action from what I've written. Nothing is sent
+ * anywhere here — used both by the server providers and by on-device AI.
+ * `compact` keeps the prompt small for phone-sized models.
  */
-export async function runIdeaAction(userId: string, ideaId: string, action: AIActionId, opts: { compareWithId?: string; question?: string } = {}) {
+export async function buildActionMessages(userId: string, ideaId: string, action: AIActionId, opts: { compareWithId?: string; question?: string; compact?: boolean } = {}) {
   const def = AI_ACTIONS.find((a) => a.id === action);
   if (!def) throw new ValidationError("Unknown action");
-  const cfg = await getAIConfig(userId);
   const { idea, text } = await ideaContext(userId, ideaId);
-
   let context = text;
   let title = `${def.label}`;
   if (action === "compare") {
     if (!opts.compareWithId) throw new ValidationError("Choose an idea to compare with");
     await ownedIdea(userId, opts.compareWithId);
     const other = await ideaContext(userId, opts.compareWithId);
-    context = `${text}\n\n---\n\n${other.text}`;
+    context = opts.compact ? `${text.slice(0, 3500)}\n\n---\n\n${other.text.slice(0, 3500)}` : `${text}\n\n---\n\n${other.text}`;
     title = `Compare with “${other.idea.title}”`;
   }
   if (action === "critique" && !idea.evaluations.length) throw new ValidationError("Evaluate this idea first, then ask for a critique");
-
+  if (opts.compact && context.length > 4500) context = context.slice(0, 4500) + "\n[…shortened for the on-device model]";
   const userPrompt = `${ACTION_PROMPTS[action]}${opts.question ? `\n\nAlso: ${opts.question}` : ""}\n\n---\nEverything below was written by me:\n\n${context}`;
   const messages: ChatMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: opts.compact ? COMPACT_SYSTEM_PROMPT : SYSTEM_PROMPT },
     { role: "user", content: userPrompt },
   ];
-  const reply = await chatCompletion(cfg, messages);
+  return { title, messages };
+}
+
+export async function saveConversation(userId: string, ideaId: string, data: { action: string; title: string; model: string | null; messages: ChatMessage[] }) {
   return db.aIConversation.create({
     data: {
       userId,
       ideaId,
-      action,
-      title,
-      model: cfg.model,
-      messages: { create: [...messages, { role: "assistant" as const, content: reply }].map((m, i) => ({ ...m, createdAt: new Date(Date.now() + i) })) },
+      action: data.action,
+      title: data.title.slice(0, 200),
+      model: data.model?.slice(0, 120) ?? null,
+      messages: { create: data.messages.map((m, i) => ({ role: m.role, content: m.content.slice(0, 100_000), createdAt: new Date(Date.now() + i) })) },
     },
-    include: { messages: { orderBy: { createdAt: "asc" } } },
   });
+}
+
+/**
+ * Runs an AI action on an idea with the configured server provider (built-in
+ * offline model or an API). Only called from an explicit user click. The reply
+ * is stored as a conversation; it never modifies the idea itself.
+ */
+export async function runIdeaAction(userId: string, ideaId: string, action: AIActionId, opts: { compareWithId?: string; question?: string } = {}) {
+  const cfg = await getAIConfig(userId);
+  const { title, messages } = await buildActionMessages(userId, ideaId, action, opts);
+  const reply = await chatCompletion(cfg, messages);
+  return saveConversation(userId, ideaId, {
+    action,
+    title,
+    model: cfg.provider === "local" ? `offline · ${cfg.localModel}` : cfg.model,
+    messages: [...messages, { role: "assistant", content: reply }],
+  });
+}
+
+/** Stores a turn generated on the user's device (phone/browser model). */
+export async function appendMessages(userId: string, conversationId: string, turns: ChatMessage[]) {
+  const conv = await db.aIConversation.findFirst({ where: { id: conversationId, userId }, select: { id: true } });
+  if (!conv) throw new NotFoundError("Conversation");
+  const now = Date.now();
+  await db.aIMessage.createMany({
+    data: turns.filter((t) => t.role !== "system").map((t, i) => ({ conversationId, role: t.role, content: t.content.slice(0, 100_000), createdAt: new Date(now + i) })),
+  });
+  await db.aIConversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
 }
 
 export async function continueConversation(userId: string, conversationId: string, content: string) {
@@ -189,7 +227,7 @@ export async function listConversations(userId: string, ideaId: string) {
   return db.aIConversation.findMany({
     where: { userId, ideaId },
     orderBy: { updatedAt: "desc" },
-    include: { messages: { where: { role: { not: "system" } }, orderBy: { createdAt: "asc" } } },
+    include: { messages: { orderBy: { createdAt: "asc" } } },
   });
 }
 

@@ -137,6 +137,10 @@ model Settings {
   // { personalInterest: 1.5, ... } — weights for evaluation criteria
   scoringWeights Json?
   aiEnabled      Boolean @default(false)
+  // "local" = built-in offline model running inside Mindspace; "remote" = OpenAI-compatible API
+  aiProvider     String  @default("local")
+  // File name of the GGUF model (in MODELS_DIR) used by the built-in provider
+  localModel     String?
   aiBaseUrl      String?
   aiModel        String?
   // AES-256-GCM encrypted with AUTH_SECRET; never sent to the client

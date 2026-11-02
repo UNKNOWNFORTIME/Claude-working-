@@ -9,6 +9,7 @@ import { ProfileSection, PasswordSection, SecuritySection } from "./account";
 import { CategoriesSection, TagsSection } from "./taxonomy";
 import { WeightsSection } from "./weights";
 import { AISection } from "./ai-settings";
+import { DeviceAISection } from "./device-ai";
 import { DataSection } from "./data";
 
 export const metadata = { title: "Settings" };
@@ -42,8 +43,11 @@ export default async function SettingsPage() {
       <Section title="Tags" description="Tags are created as you use them. Remove ones you no longer need.">
         <TagsSection tags={tags.map((t) => ({ id: t.id, name: t.name, count: t._count.ideas + t._count.thoughts }))} />
       </Section>
-      <Section id="ai" title="AI thinking partner" description="Optional. Works with any OpenAI-compatible API. Your key stays on the server, encrypted.">
+      <Section id="ai" title="AI thinking partner" description="Optional. Use the built-in offline model, or any OpenAI-compatible API.">
         <AISection initial={ai} />
+      </Section>
+      <Section id="device-ai" title="AI on this device" description="For your phone: a small model that runs right in the browser, fully offline.">
+        <DeviceAISection />
       </Section>
       <Section id="data" title="Your data" description="Everything you write belongs to you. Export it any time.">
         <DataSection />

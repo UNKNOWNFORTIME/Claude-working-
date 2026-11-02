@@ -16,6 +16,7 @@ It is built to help you choose, not to collect: every idea can be put through a 
 | **Idea Vault** | Card, list and Kanban views (drag between stages). Title, summary, Markdown description, motivation, category, tags, priority, stage, links and references, dated notes. Everything autosaves. |
 | **Idea evaluation** | Seven guided sections (problem & value, motivation, feasibility, cost & time, potential, risks, opportunity cost), 1–10 scores on seven criteria, and a **weighted /100 score with a full breakdown**. Rule-based notes flag trade-offs (e.g. "high score, but feasibility is 2/10"). Space for uncertainties. Evaluations are snapshots: each keeps its own weights, and older ones are never overwritten. |
 | **Decisions** | Pursue / Research further / Revisit later / Not worth pursuing, with a reason, date and optional revisit date. Recording a decision moves the idea to the matching stage. |
+| **Offline AI** (built in) | A model runs **inside Mindspace on your laptop** (llama.cpp, no extra app, no internet). Your **Android phone** gets its own small model that runs **inside the browser on the phone**; it's copied from your laptop once and then works offline. See [Offline AI](#offline-ai). |
 | **AI thinking partner** (optional) | Explore, Challenge, Find weaknesses, Improve, MVP plan, Critique my evaluation, Compare ideas, Summarize. It is told to separate what you wrote from assumptions, and never to invent facts or numbers. It only runs when you click. Conversations are saved per idea, and replies are only added to your notes if you click "Save as note". Works with any OpenAI-compatible API. |
 | **Projects** | Convert an idea with one click (it stays linked to its evaluations). Objective, expected outcome, milestones, tasks with due dates, notes, progress, status, reflections. |
 | **Goals** | Seven goal types, why it matters, target date, progress, milestones, notes. Link ideas and projects to a goal to see whether your work supports it. |
@@ -152,6 +153,7 @@ npm test
 
 They cover:
 
+- **Offline AI:** prompt budgeting for small context windows, model-file safety (no path traversal), model discovery. Real inference also runs if you set `TEST_GGUF=/path/to/model.gguf`.
 - **Scoring:** weighted maths, partial scoring, zero weights, clamping, breakdowns that add up, bands and trade-off notes
 - **Persistence:** capture to idea with the original preserved, evaluation history, weight snapshots, decisions changing stages, idea to project, trash and restore, export/import round trip and idempotency
 - **Authorization:** one user can't read, search, edit, evaluate, decide on, link to, convert or trash another user's data
@@ -183,9 +185,48 @@ npm run typecheck
   gunzip -c backups/<file>.sql.gz | psql "$DATABASE_URL"
   ```
 
+## Offline AI
+
+Mindspace can think with you without the internet and without sending your notes anywhere.
+
+| Where | How it runs | Default model | Size |
+| --- | --- | --- | --- |
+| **Laptop / computer** running Mindspace | Inside the Mindspace server process via [llama.cpp](https://github.com/ggml-org/llama.cpp) (`node-llama-cpp`). Uses the CPU, or the GPU (Metal, CUDA or Vulkan) when available. | Qwen2.5 3B Instruct (Q4_K_M) | ≈2.0 GB |
+| **Android phone** (Chrome) | Inside the browser on the phone via llama.cpp compiled to WebAssembly (`wllama`). Uses WebGPU when the phone supports it, otherwise all CPU cores. | Qwen2.5 1.5B Instruct (Q4_K_M) | ≈1.1 GB |
+
+Other options: Llama 3.2 3B and Qwen2.5 7B for laptops (the 7B needs 16 GB RAM), and Qwen2.5 0.5B "lite" for older phones. List them with `npm run ai:models`.
+
+### 1. Download the models (one time, needs internet)
+
+```bash
+npm run ai:download                # recommended laptop model + phone model
+npm run ai:download -- qwen2.5-7b  # optional bigger laptop model
+```
+
+Files go into `./models` (set `MODELS_DIR` to change this). Interrupted downloads resume. You can also put any GGUF chat model in that folder yourself.
+
+### 2. Laptop
+
+Settings → **AI thinking partner** → *Built-in offline model* → Save → *Test*. The first answer after a restart takes a little longer while the model loads into memory.
+
+### 3. Android phone
+
+1. Open Mindspace on the phone in Chrome, using your laptop's address (see below), and sign in.
+2. Optional: Chrome menu → **Install app** / *Add to Home screen*. Mindspace then opens full-screen like an app.
+3. Settings → **AI on this device** → *Download to this device*. The model is copied from your laptop over Wi-Fi (no internet needed) and stored on the phone.
+4. Leave *Use on-device AI in this browser* switched on. AI actions on that phone now run on the phone itself, with the reply appearing as it's written.
+
+The setting is per device, so your laptop keeps using its own larger model.
+
+**Reaching your laptop from the phone.** Run Mindspace with `npm run build && npm start` on the laptop, then on the phone open `http://<laptop-ip>:3000` (same Wi-Fi network).
+
+For the best phone experience, serve Mindspace over **HTTPS**, for example with [Tailscale](https://tailscale.com) `tailscale serve`, a reverse proxy with a certificate, or by deploying it. Over plain `http://` on a local network, Chrome blocks browser storage, so the model is copied again in each session instead of being kept on the phone. (Plain HTTP also needs `COOKIE_SECURE=false` for sign-in to work.)
+
+**What to expect.** Small models are useful for questions, challenges, MVP outlines and summaries. They are less sharp than large cloud models. On a recent mid-range phone, expect a reply to start within roughly 10–60 seconds and then stream. Older phones are slower; use the 0.5B lite model there. Your notes and ideas still live on the Mindspace computer: the phone needs to reach it to load and save them, but the AI processing happens entirely on the phone.
+
 ## AI configuration
 
-Settings → *AI thinking partner*: enable it, set the base URL, model and API key, then use *Test connection*. You can also set defaults with `AI_BASE_URL`, `AI_MODEL` and `AI_API_KEY`. Any OpenAI-compatible `/chat/completions` endpoint works, including OpenAI, OpenRouter, Groq, Together, or a local Ollama (`http://localhost:11434/v1`).
+Settings → *AI thinking partner* → *OpenAI-compatible API*: set the base URL, model and API key, then use *Test*. You can also set defaults with `AI_BASE_URL`, `AI_MODEL` and `AI_API_KEY`. Any OpenAI-compatible `/chat/completions` endpoint works, including OpenAI, OpenRouter, Groq, Together, or a local Ollama (`http://localhost:11434/v1`).
 
 Before each request, the panel says exactly what will be sent. Each conversation has a "What was sent" disclosure.
 
@@ -201,6 +242,7 @@ Before each request, the panel says exactly what will be sent. Each conversation
 
 Phases 1–3 of the original brief are complete. From Phase 4, keyboard shortcuts, import/export and the mobile layout are done. Possible next steps:
 
+- Offline capture on the phone with sync back to the laptop
 - Visual graph view of connections (Phase 4, optional)
 - Automatic suggestions for related ideas (Phase 4)
 - Streaming AI responses

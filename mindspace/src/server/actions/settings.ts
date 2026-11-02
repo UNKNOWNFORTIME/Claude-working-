@@ -4,7 +4,7 @@ import { saveAISettings, getAIConfig } from "@/server/services/settings";
 import { chatCompletion } from "@/server/services/ai";
 import { importJSON } from "@/server/services/backup";
 
-export async function saveAI(input: { aiEnabled: boolean; aiBaseUrl: string; aiModel: string; aiApiKey?: string }) {
+export async function saveAI(input: { aiEnabled: boolean; aiProvider: "local" | "remote"; localModel?: string; aiBaseUrl: string; aiModel: string; aiApiKey?: string }) {
   return run(async (uid) => {
     await saveAISettings(uid, input);
     return null;

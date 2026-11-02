@@ -1,10 +1,13 @@
 "use client";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowUp, ChevronDown, Copy, Loader2, NotebookPen, Sparkles, Trash2, ShieldCheck } from "lucide-react";
-import { runAIAction, sendAIMessage, deleteAIConversation } from "@/server/actions/ai";
+import { ArrowUp, ChevronDown, Copy, Laptop, Loader2, NotebookPen, Smartphone, Sparkles, Square, Trash2, ShieldCheck, Globe } from "lucide-react";
+import { sendAIMessage, deleteAIConversation, appendDeviceTurn } from "@/server/actions/ai";
+import { useDeviceAI } from "@/hooks/use-device-ai";
+import { runIdeaAI } from "@/lib/run-idea-ai";
+import { deviceChat, type DeviceMessage } from "@/lib/device-ai";
 import { addNote } from "@/server/actions/ideas";
 import { AI_ACTIONS, type AIActionId } from "@/server/services/ai-actions";
 import { Button } from "@/components/ui/button";
@@ -19,9 +22,23 @@ export type ConversationView = {
   messages: { id: string; role: "system" | "user" | "assistant"; content: string; createdAt: Date }[];
 };
 
-export function AIPanel({ ideaId, conversations, aiReady, otherIdeas, hasEvaluation, openConversation }: {
-  ideaId: string; conversations: ConversationView[]; aiReady: boolean; otherIdeas: { id: string; title: string }[]; hasEvaluation: boolean; openConversation?: string;
+export type ServerAIInfo = { ready: boolean; provider: "local" | "remote"; label: string };
+
+/** Live state for a reply being generated on this device. */
+type Live = { title: string; text: string; loadProgress: number | null } | null;
+
+export function AIPanel({ ideaId, conversations, ai, otherIdeas, hasEvaluation, openConversation, autoRun }: {
+  ideaId: string; conversations: ConversationView[]; ai: ServerAIInfo; otherIdeas: { id: string; title: string }[]; hasEvaluation: boolean; openConversation?: string; autoRun?: "critique";
 }) {
+  const device = useDeviceAI();
+  const aiReady = ai.ready || device.active;
+  const [live, setLive] = useState<Live>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const liveRef = useRef<HTMLDivElement>(null);
+  const isLive = !!live;
+  useEffect(() => {
+    if (isLive) liveRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [isLive]);
   const router = useRouter();
   const [running, setRunning] = useState<AIActionId | null>(null);
   const [compareWith, setCompareWith] = useState("");
@@ -29,23 +46,47 @@ export function AIPanel({ ideaId, conversations, aiReady, otherIdeas, hasEvaluat
   const [expanded, setExpanded] = useState<string | null>(openConversation ?? conversations[0]?.id ?? null);
   const [, start] = useTransition();
 
+  // Started from "Ask AI to critique this" on the evaluation page
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (autoRun && aiReady && !autoRan.current) {
+      autoRan.current = true;
+      router.replace(`/ideas/${ideaId}?tab=ai`, { scroll: false });
+      run(autoRun);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRun, aiReady]);
+
   if (!aiReady) {
     return (
       <EmptyState icon={Sparkles} title="The thinking partner is off" action={<Button asChild variant="outline" size="sm"><Link href="/settings#ai">Set up AI in Settings</Link></Button>}>
-        Mindspace works fully without AI. If you connect an OpenAI-compatible provider, you can ask it to challenge and explore your ideas — only when you click.
+        Mindspace works fully without AI. Turn on the built-in offline model (runs on your laptop, no internet) or on-device AI for your phone in Settings. It only runs when you click.
       </EmptyState>
     );
   }
 
-  const run = (action: AIActionId) => {
-    if (action === "compare" && !compareWith) return toast.error("Choose an idea to compare with first");
+  function run(action: AIActionId) {
+    if (action === "compare" && !compareWith) return void toast.error("Choose an idea to compare with first");
     setRunning(action);
+    const label = AI_ACTIONS.find((a) => a.id === action)!.label;
+    const abort = new AbortController();
+    abortRef.current = abort;
+    if (device.active) setLive({ title: label, text: "", loadProgress: null });
     start(async () => {
-      const res = await runAIAction(ideaId, action, { compareWithId: compareWith || undefined, question: question.trim() || undefined });
+      const res = await runIdeaAI({
+        ideaId,
+        action,
+        opts: { compareWithId: compareWith || undefined, question: question.trim() || undefined },
+        deviceFile: device.active ? device.file : null,
+        signal: abort.signal,
+        onToken: (text) => setLive((l) => (l ? { ...l, text, loadProgress: null } : l)),
+        onLoadProgress: (f) => setLive((l) => (l ? { ...l, loadProgress: f } : l)),
+      });
       setRunning(null);
+      setLive(null);
       if (!res.ok) return void toast.error(res.error);
       setQuestion("");
-      setExpanded(res.data.id);
+      setExpanded(res.id);
       router.refresh();
     });
   };
@@ -55,8 +96,35 @@ export function AIPanel({ ideaId, conversations, aiReady, otherIdeas, hasEvaluat
       <div>
         <p className="mb-3 flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
           <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
-          Nothing is sent until you click an action. Then this idea&apos;s text, notes and latest evaluations are sent to your configured AI provider. Replies are suggestions — they never change your idea.
+          {device.active
+            ? "On-device AI: everything is processed on this phone/browser. Nothing leaves the device except saving the reply to your Mindspace."
+            : ai.provider === "local"
+              ? "Offline: the built-in model runs on your Mindspace computer. Nothing is sent to the internet."
+              : "Nothing is sent until you click an action. Then this idea's text, notes and latest evaluations are sent to your configured AI provider."}{" "}
+          Replies are suggestions — they never change your idea.
         </p>
+        <div className="mb-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+          {device.active ? <Smartphone className="size-3.5" /> : ai.provider === "local" ? <Laptop className="size-3.5" /> : <Globe className="size-3.5" />}
+          {device.active ? `On this device · ${device.file}` : ai.label}
+        </div>
+      {live && (
+        <div ref={liveRef} className="mb-4 scroll-mt-16 rounded-xl border border-primary/30 bg-card p-4" aria-live="polite">
+          <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+            <Loader2 className="size-4 animate-spin text-primary" /> {live.title}
+            <Button size="xs" variant="ghost" className="ml-auto" onClick={() => abortRef.current?.abort()}><Square /> Stop</Button>
+          </div>
+          {live.loadProgress != null ? (
+            <div className="text-xs text-muted-foreground">
+              Loading the model onto this device… {Math.round(live.loadProgress * 100)}%
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary/70" style={{ width: `${live.loadProgress * 100}%` }} /></div>
+            </div>
+          ) : live.text ? (
+            <Markdown className="text-[14.5px]">{live.text}</Markdown>
+          ) : (
+            <p className="text-xs text-muted-foreground">Reading your idea… (the first reply on a phone can take a little while)</p>
+          )}
+        </div>
+      )}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {AI_ACTIONS.map((a) => {
             const disabled = !!running || (a.id === "critique" && !hasEvaluation) || (a.id === "compare" && otherIdeas.length === 0);
@@ -104,7 +172,7 @@ export function AIPanel({ ideaId, conversations, aiReady, otherIdeas, hasEvaluat
         ) : (
           <div className="space-y-2">
             {conversations.map((c) => (
-              <Conversation key={c.id} ideaId={ideaId} conv={c} open={expanded === c.id} onToggle={() => setExpanded(expanded === c.id ? null : c.id)} />
+              <Conversation key={c.id} ideaId={ideaId} conv={c} deviceFile={device.active ? device.file : null} open={expanded === c.id} onToggle={() => setExpanded(expanded === c.id ? null : c.id)} />
             ))}
           </div>
         )}
@@ -113,12 +181,13 @@ export function AIPanel({ ideaId, conversations, aiReady, otherIdeas, hasEvaluat
   );
 }
 
-function Conversation({ ideaId, conv, open, onToggle }: { ideaId: string; conv: ConversationView; open: boolean; onToggle: () => void }) {
+function Conversation({ ideaId, conv, deviceFile, open, onToggle }: { ideaId: string; conv: ConversationView; deviceFile: string | null; open: boolean; onToggle: () => void }) {
   const router = useRouter();
   const [reply, setReply] = useState("");
   const [sending, start] = useTransition();
   const [pendingText, setPendingText] = useState<string | null>(null);
-  const [first, ...rest] = conv.messages;
+  const [streamed, setStreamed] = useState("");
+  const [first, ...rest] = conv.messages.filter((m) => m.role !== "system");
 
   const send = () => {
     const text = reply.trim();
@@ -126,8 +195,20 @@ function Conversation({ ideaId, conv, open, onToggle }: { ideaId: string; conv: 
     setPendingText(text);
     setReply("");
     start(async () => {
-      const res = await sendAIMessage(ideaId, conv.id, text);
+      let res: { ok: boolean; error?: string };
+      if (deviceFile) {
+        try {
+          const history: DeviceMessage[] = conv.messages.map((m) => ({ role: m.role, content: m.content }));
+          const reply = await deviceChat(deviceFile, [...history, { role: "user", content: text }], { onToken: setStreamed });
+          res = await appendDeviceTurn(ideaId, conv.id, [{ role: "user", content: text }, { role: "assistant", content: reply }]);
+        } catch (e) {
+          res = { ok: false, error: `On-device AI failed: ${(e as Error).message}` };
+        }
+      } else {
+        res = await sendAIMessage(ideaId, conv.id, text);
+      }
       setPendingText(null);
+      setStreamed("");
       if (!res.ok) {
         setReply(text);
         return void toast.error(res.error);
@@ -176,7 +257,7 @@ function Conversation({ ideaId, conv, open, onToggle }: { ideaId: string; conv: 
           {pendingText && (
             <>
               <div className="ml-auto max-w-[85%] rounded-xl rounded-br-sm bg-accent px-3.5 py-2 text-sm text-accent-foreground whitespace-pre-wrap">{pendingText}</div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Thinking…</div>
+              {streamed ? <Markdown className="text-[14.5px]">{streamed}</Markdown> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Thinking…</div>}
             </>
           )}
           <div className="flex items-end gap-2 pt-2">
